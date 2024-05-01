@@ -1,0 +1,590 @@
+---
+title: "AfterRevisions_Figure4"
+output: html_notebook
+---
+
+# Figure 4 after revisions
+# After review change heatmap to be treatment vs control on Day 35
+# Adding in extra networks
+# Mariia Taguer
+# Feb 14 2024
+
+# Load in libraries
+```{r}
+suppressWarnings(suppressMessages(library(tidyverse)))
+suppressWarnings(suppressMessages(library(vegan)))
+suppressWarnings(suppressMessages(library(RColorBrewer)))
+suppressWarnings(suppressMessages(library(rstatix)))
+suppressWarnings(suppressMessages(library(tidygraph)))
+suppressWarnings(suppressMessages(library(ggraph)))
+suppressWarnings(suppressMessages(library(pheatmap)))
+suppressWarnings(suppressMessages(library(umap)))
+suppressWarnings(suppressMessages(library(png)))
+suppressWarnings(suppressMessages(library(magick)))
+suppressWarnings(suppressMessages(library(ggpubr)))
+suppressWarnings(suppressMessages(library(spatstat)))
+suppressWarnings(suppressMessages(library(raster)))
+suppressWarnings(suppressMessages(library(ggforce)))
+theme_set(theme_bw(base_size = 16))
+source("Functions.R")
+```
+
+# Read in the preprocessed spatial data
+```{r}
+# Set working directory to Analysis
+data.long.md <- read.csv( "../data/data_long_md.csv")
+random.long.md <- read.csv( "../data/random_long_md.csv")
+cell.info.summary <- read.csv( "../data/cell_info_summary.csv")
+Probability.wide.0 <- read.csv( "../data/Probability_wide_0.csv", check.names = F)
+Probability.wide.0 %>% dim()
+```
+
+# Prep the data
+```{r}
+data.long.md$Coloc <- paste0(data.long.md$Bacteria1, "_", data.long.md$Bacteria2)
+data.long.md$Sample <- paste(data.long.md$Mouse, data.long.md$Tissue, 
+                             data.long.md$Section, data.long.md$FoV, sep = "_")
+Sample.wide <- data.long.md %>%
+  dplyr::select(Mouse, Tissue, Section, FoV, Treatment, Cage, Day, Sample, Coloc, Count) %>% 
+  pivot_wider(names_from = Coloc,  values_from = Count, names_prefix = "Coloc_")
+
+#turn cage and day into character
+Sample.wide$Cage <- as.character(Sample.wide$Cage)
+Sample.wide$Day <- as.character(Sample.wide$Day)
+Sample.wide$Mouse <- as.character(Sample.wide$Mouse)
+Sample.wide$Section <- as.character(Sample.wide$Section)
+Sample.wide$FoV <- as.character(Sample.wide$FoV)
+
+#Turn into proportion
+Sample.wide$Total <- Sample.wide %>% dplyr::select(where(is.numeric)) %>% rowSums(na.rm = TRUE)
+Sample.wide.prop <- Sample.wide %>% dplyr::select(where(is.numeric)) %>% mutate(./Total) 
+
+#add back in metadata 
+Sample.wide.prop <- cbind(Sample.wide[,8], Sample.wide.prop)
+
+# Get probability.wide and sample.wide to look the same
+Probability.wide <- Probability.wide.0
+
+# get what is the same in both of them
+samples.in.both <- intersect(Probability.wide$Sample, Sample.wide.prop$Sample)
+
+# Find colocs found in both
+colocs.in.both <- intersect(colnames(Probability.wide), colnames(Sample.wide.prop))
+#3660 colocs are found in both, whereas 4626 are in probability and 3787 are in sample wide.
+
+# what's in sample.wide that's not in probability?
+colocs.in.sample.wide <- setdiff(colnames(Sample.wide.prop), colnames(Probability.wide))
+Sample.wide.prop %>% dplyr::select(colocs.in.sample.wide)
+# everything being excluded was all zeros
+
+# For both, only keep colocs and samples in both
+Sample.wide.prop <- Sample.wide.prop %>% filter(Sample %in% samples.in.both) %>%
+  dplyr::select(colocs.in.both)
+Probability.wide <- Probability.wide %>% filter(Sample %in% samples.in.both) %>%
+  dplyr::select(colocs.in.both)
+
+identical(colnames(Sample.wide.prop), colnames(Probability.wide))
+identical(row.names(Sample.wide.prop), row.names(Probability.wide))
+identical(Sample.wide.prop$Sample, Probability.wide$Sample)
+
+# Now that my data looks the same, I can divide the sample by the probability
+# NAs in probability wide are because that coloc just doesn't happen in that sample, so we can set it to zero
+Probability.wide[is.na(Probability.wide)] <- 0
+
+# sample proportion / probability = coloc scores. 
+coloc.score.prob <- ifelse(as.matrix(dplyr::select(Probability.wide, -Sample)) == 0,
+                           as.matrix(dplyr::select(Sample.wide.prop, -Sample)), 
+                           as.matrix(dplyr::select(Sample.wide.prop,-Sample))/as.matrix(dplyr::select(Probability.wide,-Sample))) %>%
+  as.data.frame()
+
+
+#let's log this
+coloc.score.prob.log <- coloc.score.prob + 1
+coloc.score.prob.log <- log10(coloc.score.prob.log) 
+
+#Add back in the metadata
+coloc.score.prob$Sample <- Sample.wide.prop$Sample
+coloc.score.prob.log$Sample <- Sample.wide.prop$Sample
+
+# if a whole column equals NA, we can remove it.This cuts it down from 3600 to 1800
+coloc.score.prob <- coloc.score.prob[,colSums(is.na(coloc.score.prob))<nrow(coloc.score.prob)] 
+coloc.score.prob.log <- coloc.score.prob.log[,colSums(is.na(coloc.score.prob.log))<nrow(coloc.score.prob.log)] 
+
+# turn long
+# [659 × 3,589]
+Score.df.prob <- coloc.score.prob %>% pivot_longer(cols = starts_with("Coloc"), names_to = "Coloc", values_to = "Score")
+Score.df.prob.log <- coloc.score.prob.log %>% pivot_longer(cols = starts_with("Coloc"), names_to = "Coloc", values_to = "Score")
+
+# Add in metadata
+md.only <- Sample.wide[,1:8]
+Score.df.prob <- left_join(Score.df.prob, md.only, by = "Sample")
+Score.df.prob.log <- left_join(Score.df.prob.log, md.only, by = "Sample")
+```
+
+#Table 1 (used to be Table 2)
+```{r}
+CECUM.AMP.b <- KW.Tx.Comparisons.rev(Score.df.prob, "CECUM", "Ampicillin", "-8")
+CECUM.AMP.t <- KW.Tx.Comparisons.rev(Score.df.prob, "CECUM", "Ampicillin", "0")
+CECUM.AMP.r <- KW.Tx.Comparisons.rev(Score.df.prob, "CECUM", "Ampicillin", "35")
+CECUM.VAN.b <- KW.Tx.Comparisons.rev(Score.df.prob, "CECUM", "Vancomycin", "-8")
+CECUM.VAN.t <- KW.Tx.Comparisons.rev(Score.df.prob, "CECUM", "Vancomycin", "0")
+CECUM.VAN.r <- KW.Tx.Comparisons.rev(Score.df.prob, "CECUM", "Vancomycin", "35")
+
+COLON.AMP.b <- KW.Tx.Comparisons.rev(Score.df.prob, "COLON", "Ampicillin", "-8")
+COLON.AMP.t <- KW.Tx.Comparisons.rev(Score.df.prob, "COLON", "Ampicillin", "0")
+COLON.AMP.r <- KW.Tx.Comparisons.rev(Score.df.prob, "COLON", "Ampicillin", "35")
+COLON.VAN.b <- KW.Tx.Comparisons.rev(Score.df.prob, "COLON", "Vancomycin", "-8")
+COLON.VAN.t <- KW.Tx.Comparisons.rev(Score.df.prob, "COLON", "Vancomycin", "0")
+COLON.VAN.r <- KW.Tx.Comparisons.rev(Score.df.prob, "COLON", "Vancomycin", "35")
+
+KWStats <- rbind(CECUM.AMP.b, CECUM.AMP.t, CECUM.AMP.r, CECUM.VAN.b, CECUM.VAN.t, CECUM.VAN.r, COLON.AMP.b, COLON.AMP.t, COLON.AMP.r, COLON.VAN.b, COLON.VAN.t, COLON.VAN.r)
+
+
+# List of KW results
+# Kruskal wallis effect size function
+ES.COLON.AMP.b <- Effect.size.rev(Score.df.prob, "COLON", "Ampicillin", "-8")
+ES.COLON.AMP.t <- Effect.size.rev(Score.df.prob, "COLON", "Ampicillin", "0")
+ES.COLON.AMP.r <- Effect.size.rev(Score.df.prob, "COLON", "Ampicillin", "35")
+ES.COLON.VAN.b <- Effect.size.rev(Score.df.prob, "COLON", "Vancomycin", "-8")
+ES.COLON.VAN.t <- Effect.size.rev(Score.df.prob, "COLON", "Vancomycin", "0")
+ES.COLON.VAN.r <- Effect.size.rev(Score.df.prob, "COLON", "Vancomycin", "35")
+
+ES.CECUM.AMP.b <- Effect.size.rev(Score.df.prob, "CECUM", "Ampicillin", "-8")
+ES.CECUM.AMP.t <- Effect.size.rev(Score.df.prob, "CECUM", "Ampicillin", "0")
+ES.CECUM.AMP.r <- Effect.size.rev(Score.df.prob, "CECUM", "Ampicillin", "35")
+ES.CECUM.VAN.b <- Effect.size.rev(Score.df.prob, "CECUM", "Vancomycin", "-8")
+ES.CECUM.VAN.t <- Effect.size.rev(Score.df.prob, "CECUM", "Vancomycin", "0")
+ES.CECUM.VAN.r <- Effect.size.rev(Score.df.prob, "CECUM", "Vancomycin", "35")
+
+ES.Stats <- rbind(ES.CECUM.AMP.b, ES.CECUM.AMP.t, ES.CECUM.AMP.r, ES.CECUM.VAN.b,
+                 ES.CECUM.VAN.t, ES.CECUM.VAN.r, ES.COLON.AMP.b, ES.COLON.AMP.t,
+                 ES.COLON.AMP.r, ES.COLON.VAN.b, ES.COLON.VAN.t, ES.COLON.VAN.r)
+
+# combine effsize and KW
+all.stats <- left_join(KWStats, ES.Stats, by = c("Coloc", "Tissue", "Treatment", "Day")) %>%
+  dplyr::select(Coloc, p, p.adj, p.adj.signif, Tissue, Treatment, Day, effsize, magnitude)
+# combine with bacterial names
+ASV <- read.csv("../data/asv_lineage_abundance.csv")
+all.stats <- all.stats %>% separate(Coloc, c("Extra", "B1", "B2"), "_", FALSE)
+all.stats$B2 <- as.integer(all.stats$B2)
+# combine by B2
+colnames(ASV)[1] <- "B2"
+all.stats <- all.stats %>% left_join(ASV[,1:2], by = "B2")
+# combine by B1
+colnames(ASV)[1] <- "B1"
+all.stats$B1 <- as.integer(all.stats$B1)
+ASV$B1 <- as.integer(ASV$B1)
+colnames(ASV)[2] <- "ASV_Cluster_Scientific_Name_1"
+all.stats <- all.stats %>% left_join(ASV[,1:2], by = "B1")
+
+# summary for table 1
+# those that are < 0.1
+summary.KW <- all.stats %>%
+  group_by(Tissue, Treatment, Day) %>%
+  summarize(signif = n())
+# those with a large eff size
+summary.ES <- all.stats %>%
+  filter(magnitude == "large") %>%
+  group_by(Tissue, Treatment, Day) %>%
+  summarize(large_effectsize = n())
+
+# need total possible colocs that occurred in either the treatment or water group
+all.colocs.Amp <- Score.df.prob %>%
+  filter(Score != 0, Treatment != "Vancomycin") %>%
+  group_by(Tissue, Day) %>%
+  dplyr::select(Coloc) %>%
+  distinct() %>%
+  summarize(TotalPossibleColocs = n())
+all.colocs.Amp$Treatment <- "Ampicillin"
+
+all.colocs.Van <- Score.df.prob %>%
+  filter(Score != 0, Treatment != "Ampicillin") %>%
+  group_by(Tissue, Day) %>%
+  dplyr::select(Coloc) %>%
+  distinct() %>%
+  summarize(TotalPossibleColocs = n())
+all.colocs.Van$Treatment <- "Vancomycin"
+all.colocs <- rbind(all.colocs.Van, all.colocs.Amp)
+
+summary.KWES <- summary.KW %>%
+  left_join(summary.ES) %>%
+  left_join(all.colocs) %>%
+  mutate(Prop.Signif = signif/TotalPossibleColocs*100, Prop.Large.EffSize = large_effectsize / TotalPossibleColocs*100)
+
+#write.csv(summary.KWES, "../Results/Table1_Pairwise_Summarystats.csv")
+```
+
+# Figure 4a Heatmap
+```{r}
+# Abundance and prevalence filtering
+List1 <- data.long.md %>%
+  filter(Count > 0) %>%
+  group_by(Coloc) %>%
+  summarize(Appearance = n()) %>%
+  filter(Appearance > 164) %>%
+  .$Coloc # colocs that appear in 25% of images
+List2 <- data.long.md %>%
+  filter(Count > 0) %>%
+  filter(Coloc %in% List1) %>%
+  group_by(Coloc) %>%
+  summarize(Total = sum(Count)) %>%
+  filter(Total > 1999) %>%
+  .$Coloc # those colocs that appear at least 2000 times across the whole study
+List2 <- paste("Coloc", List2, sep = "_")
+
+Score.df.prob.Short <- Score.df.prob %>% filter(Coloc %in% List2)
+
+# Statistical analysis for every coloc in every tissue, abx vs water at day 35
+KWStats2 <- Score.df.prob.Short %>%
+  filter(Day == 35)  %>%
+  group_by(Coloc, Tissue) %>%
+  rstatix:::pairwise_wilcox_test(Score ~ Treatment, ref.group = "H2O")
+
+# Now get Colocs that at least once have a p < 0.05
+List3 <- KWStats2 %>% filter(p.adj < 0.05) %>% .$Coloc %>% unique()
+Score.df.prob.Short <- Score.df.prob.Short %>% filter(Coloc %in% List3)
+
+# get the mean
+FC <- Score.df.prob.Short %>%
+  filter(Day == 35) %>%
+  group_by(Tissue, Treatment, Coloc) %>%
+  summarize(meanScore = mean(Score))
+
+# get the log2 of the mean
+FC <- FC %>% mutate(log2meanScore = log2(meanScore +1 ))
+# 210 colocs here 
+# subtract log2(abx) - log2(water)
+Amp <- FC %>%
+  pivot_wider(-meanScore, names_from = Treatment, values_from = log2meanScore) %>%
+  dplyr::select(-Vancomycin) %>%
+  mutate(AmpDiff = Ampicillin - H2O)
+
+Van <- FC %>%
+  pivot_wider(-meanScore, names_from = Treatment, values_from = log2meanScore) %>%
+  dplyr::select(-Ampicillin) %>%
+  mutate(VanDiff = Vancomycin - H2O)
+
+FC <- Amp %>%
+  left_join(Van, by = c("Tissue", "Coloc")) %>% 
+  dplyr::select(Tissue, Coloc, AmpDiff, VanDiff)
+
+names(FC)[3] <- "Ampicillin"
+names(FC)[4] <- "Vancomycin"
+
+# join it with the stats
+FC.stats <- FC %>% 
+  pivot_longer(cols = c(Ampicillin, Vancomycin), names_to = "group2", values_to = "Diff") %>%
+  left_join(dplyr::select(KWStats2, c(Coloc, Tissue, group2, p.adj, p.adj.signif)))
+
+# list of significant colocs that have a FC > or < 1
+Sig.Eff.Colocs.Amp.CE <- FC.stats %>%
+  filter(group2 == "Ampicillin" & Tissue == "CECUM") %>%
+  filter(p.adj < 0.05) %>%
+  filter(Diff > 1 | Diff < -1) %>%
+  .$Coloc
+Sig.Eff.Colocs.Van.CE <- FC.stats %>%
+  filter(group2 == "Vancomycin"  & Tissue == "CECUM") %>%
+  filter(p.adj < 0.05) %>%
+  filter(Diff > 1 | Diff < -1) %>%
+  .$Coloc
+Sig.Eff.Colocs.Amp.CO <- FC.stats %>%
+  filter(group2 == "Ampicillin" & Tissue == "COLON") %>%
+  filter(p.adj < 0.05) %>%
+  filter(Diff > 1 | Diff < -1) %>%
+  .$Coloc
+
+Sig.Eff.Colocs.Van.CO <- FC.stats %>%
+  filter(group2 == "Vancomycin"  & Tissue == "COLON") %>%
+  filter(p.adj < 0.05) %>%  
+  filter(Diff > 1 | Diff < -1) %>%
+  .$Coloc
+
+Sig.Eff.Colocs.CE <- union(Sig.Eff.Colocs.Amp.CE, Sig.Eff.Colocs.Van.CE) 
+Sig.Eff.Colocs.CO <- union(Sig.Eff.Colocs.Amp.CO,Sig.Eff.Colocs.Van.CO) 
+Sig.Eff.Colocs <- union(Sig.Eff.Colocs.CE, Sig.Eff.Colocs.CO)
+# 59 colocs have a large effect size and are significantly different between an abx and control in at least one tissue
+
+# filter the FC to only include colocs that are significant and have a large effect size
+FC.stats <- FC.stats %>% filter(Coloc %in% Sig.Eff.Colocs)
+
+# Prep for plotting
+# # get b1 and b2 again
+B1 <- FC.stats$Coloc %>% strsplit( "_" ) %>% sapply( "[", 2 )
+B2 <- FC.stats$Coloc %>% strsplit( "_" ) %>% sapply( "[", 3 )
+FC.stats$B1 <- B1
+FC.stats$B2 <- B2
+# Add bacterial names
+colnames(ASV)[1] <- "B1"
+ASV$B1 <- as.character(ASV$B1)
+FC.stats <- left_join(FC.stats, ASV, by = "B1")
+# join by bact 2
+colnames(ASV)[1] <- "B2"
+colnames(ASV)[2] <- "ASV_Cluster_Scientific_Name_2"
+ASV$B2 <- as.character(ASV$B2)
+FC.stats <- left_join(FC.stats, ASV, by = "B2")
+
+# Name coloc by bacterial name
+FC.stats$Coloc_bac <- paste0(FC.stats$ASV_Cluster_Scientific_Name, "_", FC.stats$ASV_Cluster_Scientific_Name_2)
+
+quickplot <- FC.stats %>% dplyr::select(Tissue, group2, Diff, Coloc_bac) %>%
+  pivot_wider(names_from = Coloc_bac, values_from = Diff)
+
+quickplot$Sample <- paste(quickplot$group2, quickplot$Tissue)
+
+quickplot <- quickplot %>%
+    arrange(factor(group2, levels = c("Ampicillin", "Vancomycin")), Tissue)
+
+quickplot <- quickplot %>% column_to_rownames("Sample") %>% dplyr::select(-c(group2, Tissue) )
+
+# Now prep the stats
+FC.stats$p.adj.signif <- gsub("ns", "", FC.stats$p.adj.signif)
+quickstats <- FC.stats %>%
+  dplyr::select(Tissue, group2, p.adj.signif, Coloc_bac) %>%
+  pivot_wider(names_from = Coloc_bac, values_from = p.adj.signif)
+
+quickstats$Sample <- paste(quickstats$group2, quickstats$Tissue)
+# make the row order match the quickplot
+quickstats <- quickstats %>% arrange(group2) %>% column_to_rownames("Sample") %>%
+  dplyr::select(-c(group2, Tissue) )
+identical(names(quickstats), names(quickplot))
+```
+
+# Shorten the names and plot
+```{r}
+names(quickplot) <- c(
+  "E. oxidoreducens 1_E. oxidoreducens 1"    ,
+  "D. dubosii 4_D. dubosii 4"                ,
+  "D. dubosii 4_M. formatexigens  1"       ,
+  "D. dubosii 4_M. formatexigens 2"       ,
+  "D. dubosii 4_A. putredinis"           ,
+  "D. dubosii 4_E. ruminantium"          ,
+  "P. capillosus_P. capillosus"         ,
+  "P. capillosus_A. putredinis"          ,
+  "P. capillosus_O. valericigenes 3"      ,
+  "P. capillosus_B. thetaiotaomicron"     ,
+  "P. capillosus_D. freteri 1"             ,
+  "A. muris 1_A. muris 1"                  ,
+  "A. muris 1_C. scindens"                ,
+  "A. muris 1_A. dolichus 1"             ,
+  "A. muris 1_M. formatexigens 2"       ,
+  "A. muris 1_A. putredinis"           ,
+  "A. muris 1_O. valericigenes 3"     ,
+  "A. muris 1_L. johnsonii"          ,
+  "M. formatexigens  1_M. formatexigens  1"  ,
+  "M. formatexigens  1_A. putredinis"        ,
+  "M. formatexigens  1_E. ruminantium"      ,
+  "M. formatexigens  1_L. johnsonii"       ,
+  "M. formatexigens  1_K. alysoides"      ,
+  "R. intestinalis 1_R. intestinalis 1"  ,
+  "R. intestinalis 1_O. valericigenes 3" ,
+  "K. alysoides 1_A. putredinis"        ,
+  "L. amygdalina_L. amygdalina"        ,
+  "L. amygdalina_L. murinus"          ,
+  "C. scindens_A. putredinis"        ,
+  "C. scindens_E. massiliensis 2"    ,
+  "A. rubiinfantis_A. rubiinfantis" ,
+  "A. rubiinfantis_A. putredinis"   ,
+  "A. rubiinfantis_L. murinus"     ,
+  "A. rubiinfantis_D. freteri 1"   ,
+  "B. uniformis_A. dolichus 1"    ,
+  "B. uniformis_A. putredinis"    ,
+  "A. dolichus 1_A. dolichus 1"  ,
+  "A. dolichus 1_A. putredinis"  ,
+  "A. dolichus 1_O. valericigenes 3",
+  "A. putredinis_A. putredinis"      ,
+  "A. putredinis_E. massiliensis 2"    ,
+  "A. putredinis_E. ruminantium"       ,
+  "O. valericigenes 3_O. valericigenes 3"   ,
+  "O. valericigenes 3_L. johnsonii"       ,
+  "L. murinus_F. contorta 1"              ,
+  "L. murinus_E. ruminantium"              ,
+  "E. ruminantium_E. ruminantium"          ,
+  "L. johnsonii_L. johnsonii"              ,
+  "R. peoriensis_D. freteri 2"             ,
+  "O. valericigenes 2_E. ruminantium"      ,
+  "O. valericigenes 2_L. johnsonii"        ,
+  "O. valericigenes 2_D. dubosii 3"        ,
+  "D. freteri 2_D. freteri 1"              ,
+  "A. aldrichii_A. aldrichii"             ,
+  "D. freteri 1_D. freteri 1"              ,
+  "D. freteri 1_K. alysoides"               ,
+  "D. dubosii 3_D. dubosii 3"               ,
+  "L. sphenoides_L. sphenoides"          ,
+  "E. xylanophilum_E. xylanophilum"
+)
+
+pheatmap(
+  t(quickplot),
+  cluster_rows = TRUE,
+  main = "Probability Scores Difference",
+  cluster_cols = FALSE,
+  width = 15,
+  #cutree_cols = 3,
+  breaks = seq(-5, 5, by = 0.5),
+  color = colorRampPalette(c("navy", "white", "red"))(20),
+  number_color = "black",
+  angle_col = 45,
+  cellwidth = 30,
+  cellheight = 10,
+  fontsize = 10,
+  display_numbers = t(quickstats),
+  fontsize_number = 12,
+#  filename = "../Figures/RevisedHeatmap_vsWater.pdf"
+)
+
+```
+
+
+# Figure 4d-g
+# Networks after review. Instead of comparing baseline to recovery, do day 35 abx to water 35
+```{r}
+txlist <- c("Ampicillin", "Vancomycin")
+Tislist <- c("CECUM", "COLON")
+
+for(Tissue in Tislist) {
+  for(Treatment in txlist) {
+    Tx <- Treatment
+    Tis <- Tissue
+    tofilt <- paste(Tx, Tis)
+    qA <- quickplot %>% filter(row.names(quickplot) %in% tofilt)
+    qA2 <- qA %>% pivot_longer(everything(), names_to = "Coloc_bac", values_to = "FC")
+    stats <- quickstats  %>% filter(row.names(quickplot) %in% tofilt) %>%
+      pivot_longer(everything(), names_to = "Coloc", values_to = "p_val")
+    qA3 <- qA2 %>% cbind(stats) %>% filter(p_val != "")
+    Coloc.Amp <- qA3 %>%  separate("Coloc_bac", c("B1", "B2"), sep = "_")
+    # remove self-associations
+    Coloc.Amp  <- Coloc.Amp %>% filter(B1 != B2)
+    # edges
+    Coloc.edges <- Coloc.Amp %>% dplyr::select(B1, B2, FC) %>%
+      mutate(Direction = case_when
+             (FC > 0 ~ "P", 
+              FC < 0 ~ "N"))
+    B1 <- Coloc.edges$B1 %>% unique
+    B2 <- Coloc.edges$B2 %>% unique
+    Coloc.nodes <- unique(c(B1, B2)) %>% as.tibble()
+    Coloc_tidy <- tbl_graph(nodes = Coloc.nodes,
+                            edges = Coloc.edges,
+                            directed = F)
+    #plot
+    print(ggraph(Coloc_tidy, layout = "kk") +
+      geom_node_point(size = 1) +
+      geom_edge_link(aes(width = abs(FC), colour = Direction), alpha = 0.8) +
+      scale_edge_width(range = c(0.5, 2)) +
+      scale_edge_color_manual(values = c("navy", "red")) +
+      geom_node_text(aes(label = Coloc.nodes$value),
+                     repel = TRUE,
+                     size = 5) +
+      labs(edge_width = "Correlation Strength") +
+      theme_graph() )
+    #save
+  #  ggsave(paste0("../Figures/RevisedFig4_Network", Tx, Tis, ".tiff"))
+  
+  }
+} 
+```
+
+# Figure 4b Label bacteria to visualize interactions
+```{r}
+invisible(source("Image_Counts_by_FoV.R")) # outputs Counts.summary and raw.data.wide
+```
+
+# Data prep
+```{r}
+Counts.summary
+
+Counts.df <- raw.data.wide %>%
+  group_by(ASV_Cluster_ID, Mouse, Tissue, Section, FoV) %>%
+  summarize(Count = n()) %>%
+  group_by(Mouse, Tissue, Section, FoV) %>%
+  mutate(Total = sum(Count))
+
+#join it with metadata 
+Counts.df <- left_join(Counts.df, md.images, by = "Mouse")
+Counts.df$ASV_Cluster_ID <- as.character(Counts.df$ASV_Cluster_ID)
+
+ASV <- read.csv("../data/asv_lineage_abundance.csv")
+ASV$ASV_Cluster_ID <- as.character(ASV$ASV_Cluster_ID)
+Counts.df <- left_join(Counts.df, dplyr::select(ASV, 1:2), by = "ASV_Cluster_ID" )
+
+Counts.df <- Counts.df %>% mutate_at("ASV_Cluster_Scientific_Name", ~replace_na(.,"Bacteria"))
+
+# Species counts per treatment
+Counts.df<- Counts.df %>% group_by(Mouse, Tissue, Section, FoV) %>%
+  mutate(SpeciesCount = n_distinct(ASV_Cluster_ID))
+
+# Fix factor levels and change H2O to water
+Counts.df$Treatment <- gsub("H2O", "Water", Counts.df$Treatment) #changes H20 to water with pattern matching
+Counts.df$Treatment <- as.factor(Counts.df$Treatment) # make them as factors
+Counts.df$Treatment <- factor(Counts.df$Treatment, levels=c('Water', 'Ampicillin', 'Vancomycin')) 
+```
+# Function
+```{r}
+image.filepath <- "..data/RawData_Images/"
+  
+csv.filepath <- "../data/Spatial_and_Abundance/"
+
+```
+
+# A rubiinfantis and A putredinis
+```{r}
+# print.images(35, "Ampicillin", "CECUM", 18, 260)
+```
+
+
+```{r}
+#print.images(35, "Water", "CECUM", 18, 260)
+```
+
+```{r}
+#print.images(35, "Ampicillin", "COLON", 18, 260)
+```
+
+```{r}
+#print.images(35, "Water", "COLON", 18, 260)
+```
+
+# Save the files
+```{r}
+col.35 <- "3448_COLON_tissue_replicate_1_fov_2"
+col.8 <- "3412_COLON_tissue_replicate_3_fov_3"
+cec.35 <- c("3446_COLON_tissue_replicate_2_fov_4", "3446_COLON_tissue_replicate_1_fov_3")
+cec.8 <- "3409_COLON_tissue_replicate_3_fov_3"
+
+
+amp35 <- c("3448_COLON_tissue_replicate_2_fov_3", "3447_COLON_tissue_replicate_2_fov_1")
+ampbase <- "3412_COLON_tissue_replicate_1_fov_4"
+van35 <- c("3451_COLON_tissue_replicate_1_fov_5", "3454_COLON_tissue_replicate_1_fov_2")
+vanbase <- c("3413_COLON_tissue_replicate_1_fov_4", "3413_COLON_tissue_replicate_3_fov_4", "3413_COLON_tissue_replicate_3_fov_2" )
+
+
+ampcec35 <-  "3446_CECUM_tissue_replicate_1_fov_3"
+ampcec8 <- "3409_CECUM_tissue_replicate_3_fov_3"
+ampcol35 <-  "3448_COLON_tissue_replicate_1_fov_1"
+ampcol8 <- "3409_COLON_tissue_replicate_3_fov_4"
+
+Bacterial_ID <- c(13, 63)
+shortlist <- c(ampcec35, ampcec8, ampcol35, ampcol8)
+
+for(sample in shortlist) {
+  coords <- read.csv(paste0(csv.filepath, sample, "_cell_information.csv"))
+  coords.Am <- coords %>% filter(ASV_Cluster_ID == Bacterial_ID)
+  
+  img <- magick::image_read(paste0(image.filepath, sample, "_segmentation.png"))
+  img <- image_rotate(img, 270)
+  #image_flip(img)
+  img.png <- image_convert(img, "png")
+  
+  theplot <- ggplot(coords.Am, aes(Centroid_X, Centroid_Y, colour = ASV_Cluster_Scientific_Name)) + 
+    background_image(img.png) +
+    geom_point(size = 3, shape = 1, stroke = 2.5)  +
+    ggtitle(sample) +
+    coord_cartesian(xlim = c(0, 2000), ylim = c(0, 2000), expand = FALSE) +
+    theme(axis.title = element_blank(), axis.text = element_blank(), axis.ticks = element_blank() ) +
+    geom_circle(aes(x0 = 100, y0 = 1900, r = 71.428), inherit.aes = FALSE, color = "white" ) +
+    theme(text = element_text(size = 20)) +
+    scale_color_manual(values=c("#00FFFF", "#FF00FF"))
+  print(theplot)
+  #ggsave(paste("../Figures/Spatial/Revised", sample, "2.tiff", sep = "_"), width = 14, height = 7.4)
+}
+```
+

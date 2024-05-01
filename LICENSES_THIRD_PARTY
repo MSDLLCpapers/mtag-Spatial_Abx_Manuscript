@@ -1,0 +1,39 @@
+--------------------------------------------------
+Third party dependencies listed by License type
+[Format: name (R Library) - URL]
+--------------------------------------------------
+
+GNU General Public License v3.0 (GPL-3)
+
+* R (R Software Environment) - https://www.r-project.org/Licenses/GPL-3
+* python-csv (python library) - https://www.r-project.org/Licenses/GPL-3
+
+
+GNU General Public License v2.0 (GPL-2)
+* vegan (R library) - https://cran.r-project.org/web/licenses/GPL-2
+* cowplot (R library) - https://cran.r-project.org/web/licenses/GPL-2
+* math (python library) - https://docs.python.org/3/license.html#psf-license
+* copy (python library) - https://docs.python.org/3/license.html#psf-license
+* ggpubr ( R library) - https://cran.r-project.org/web/licenses/GPL-2
+* rstatix (R library) - https://cran.r-project.org/web/licenses/GPL-2
+* pheatmap (R library) - https://cran.r-project.org/web/licenses/GPL-2
+
+MIT License (MIT) 
+* tidyverse (R library) - https://cran.r-project.org/web/licenses/MIT
+* shututil (python library) - https://opensource.org/license/mit/
+* umap (R library) - https://cran.r-project.org/web/licenses/MIT
+* tidygraph (R library) - https://cran.r-project.org/web/licenses/MIT
+* ggraph (R library) - https://cran.r-project.org/web/licenses/MIT
+
+The 3-Clause BSD License (BSD)
+* pandas (python library) - https://opensource.org/license/bsd-3-clause/
+* seaborn (python library) - https://opensource.org/license/bsd-3-clause/
+* glob (python library) - https://opensource.org/license/bsd-3-clause/
+
+Misc Licenses
+* python - https://docs.python.org/3/license.html
+* matplotlib (python library) - https://matplotlib.org/stable/users/project/license.html
+* numpy (python library) - https://numpy.org/doc/stable/license.html
+* RColorBrewer (R library) - https://www.apache.org/licenses/LICENSE-2.0
+* os (python library) - https://www.apache.org/licenses/LICENSE-2.0
+

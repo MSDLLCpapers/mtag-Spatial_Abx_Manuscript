@@ -1,0 +1,44 @@
+---
+title: "Cell size distribution"
+output: html_notebook
+---
+
+# Get distribution of cell sizes from our HiPR-FISH data to get an understanding
+# of how much size is affecting our neighborhood analysis
+
+```{r}
+# read in data on cell size
+# Soatial_and_Abundance
+# library("readr")
+library(tidyverse)
+library(vegan)
+library(ggplot2)
+theme_set(theme_bw(base_size = 20))
+library(RColorBrewer)
+library(ape)
+library(ggpubr)
+library(rstatix)
+library(cowplot)
+library(pheatmap)
+library(umap)
+
+source("Functions.R")
+source("Image_Counts_by_FoV.R") # outputs Counts.summary and raw.data.wide
+
+```
+
+```{r}
+Counts.summary
+raw.data.wide
+
+hist(x = raw.data.wide$Cell_Size)
+ggplot(raw.data.wide, aes(Cell_Size)) + geom_histogram() + xlim(0, 500)
+
+# an image pixel is 70 nm. 
+# if a bug has a diameter of a length of 2 um and a width of 1 um, it's area is 1.6 um. that is 1.6 / 0.07 = 22.86 pixels
+# how do we get 96% confidence interval of a histogram
+# # get percentiles of cellsize
+quantile(raw.data.wide$Cell_Size, probs = c(0.10,0.9))
+# 25% is 35, 75% is 96
+```
+
